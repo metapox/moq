@@ -52,6 +52,15 @@
           ];
         };
 
+        # GStreamer dependencies (for moq-gst plugin)
+        gstreamerDeps = with pkgs; [
+          gst_all_1.gstreamer
+          gst_all_1.gstreamer.dev
+          gst_all_1.gst-plugins-base
+          gst_all_1.gst-plugins-good
+          gst_all_1.gst-plugins-bad
+        ];
+
         # Rust dependencies
         rustDeps = with pkgs; [
           rust-toolchain
@@ -68,6 +77,11 @@
           cargo-edit
           cargo-sweep
           cargo-semver-checks
+        ]
+        ++ gstreamerDeps
+        ++ pkgs.lib.optionals (!pkgs.stdenv.isDarwin) [
+          # Marked broken on Darwin in nixpkgs, but builds fine on Linux.
+          pkgs.release-plz
         ];
 
         # JavaScript dependencies
@@ -109,6 +123,7 @@
             moq-clock
             moq-cli
             moq-token-cli
+            moq-boy
             ;
         };
 

@@ -34,7 +34,6 @@
 		"js/watch",
 		"js/publish",
 		"js/signals",
-		"dev/web",
-		"dev/boy"
+		"demo/web"
 	]
 }

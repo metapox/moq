@@ -21,12 +21,12 @@ The core networking is delegated to a QUIC library but the rest is in applicatio
 - 🎯 **Multi-language** with both Rust (native) and TypeScript (web) libraries.
 - 🔧 **Generic** for any live data, not just media. Includes text chat as both an example and a core feature.
 
-> **Note:** This project implements [moq-lite](https://doc.moq.dev/concept/layer/moq-lite), a forwards-compatible subset of the IETF [moq-transport](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/) draft. moq-lite works with any moq-transport CDN (ex. [Cloudflare](https://doc.moq.dev/blog/first-cdn)). The focus is narrower, prioritizing simplicity and deployability.
+> **Note:** This project implements [moq-lite](https://doc.moq.dev/concept/layer/moq-lite), a forwards-compatible subset of the IETF [moq-transport](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/) draft. moq-lite works with any moq-transport CDN (ex. [Cloudflare](https://moq.dev/blog/first-cdn/)). The focus is narrower, prioritizing simplicity and deployability.
 
 ## Demo
 
 This repository is split into multiple binaries and libraries across different languages.
-It can get overwhelming, so there's an included [demo](dev/web) with some examples.
+It can get overwhelming, so there's an included [demo](demo/web) with some examples.
 
 **Note:** this demo uses an insecure HTTP fetch intended for *local development only*.
 In production, you'll need a proper domain and a matching TLS certificate via [LetsEncrypt](https://letsencrypt.org/docs/) or similar.
@@ -107,7 +107,7 @@ Think of `hang` as like HLS/DASH, while `moq-lite` is like HTTP.
 
 ## Libraries
 
-This repository provides both [Rust](/rs) and [TypeScript](/js) libraries with similar APIs but language-specific optimizations.
+This repository provides both [Rust](rs) and [TypeScript](js) libraries with similar APIs but language-specific optimizations.
 
 ### Rust
 
@@ -121,16 +121,16 @@ This repository provides both [Rust](/rs) and [TypeScript](/js) libraries with s
 | [hang](rs/hang)             | Media-specific encoding/streaming layered on top of `moq-lite`. Can be used as a library.                     | [![docs.rs](https://docs.rs/hang/badge.svg)](https://docs.rs/hang)             |
 | [moq-cli](rs/moq-cli)       | A CLI for publishing media to MoQ relays.                                                                                             |                                                                                |
 | [moq-mux](rs/moq-mux)       | Media muxers and demuxers (fMP4/CMAF, HLS) for importing content into MoQ broadcasts.                                                 | [![docs.rs](https://docs.rs/moq-mux/badge.svg)](https://docs.rs/moq-mux)       |
-| [hang-gst](https://github.com/moq-dev/gstreamer) | A GStreamer plugin for publishing or consuming hang broadcasts. A separate repo to avoid requiring gstreamer as a build dependency.            |                                                                                |
+| [moq-gst](rs/moq-gst)       | A GStreamer plugin for publishing or consuming MoQ broadcasts. Not built by default; requires GStreamer dev libraries.                         |                                                                                |
 
 ### TypeScript
 
 | Package                                  | Description                                                                                                        | NPM                                                                                                   |
 |------------------------------------------|--------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------|
 | **[@moq/lite](js/lite)**             | The core pub/sub transport protocol. Intended for browsers, but can be run server-side with a WebTransport polyfill.                                   | [![npm](https://img.shields.io/npm/v/@moq/lite)](https://www.npmjs.com/package/@moq/lite)   |
-| **[@moq/token](js/token)**             |  Authentication library & CLI for JS/TS environments (see [Authentication](doc/concept/authentication.md))                               | [![npm](https://img.shields.io/npm/v/@moq/token)](https://www.npmjs.com/package/@moq/token)   |
+| **[@moq/token](js/token)**             |  Authentication library & CLI for JS/TS environments (see [Authentication](doc/app/relay/auth.md))                               | [![npm](https://img.shields.io/npm/v/@moq/token)](https://www.npmjs.com/package/@moq/token)   |
 | **[@moq/hang](js/hang)**           | Core media library: catalog, container, and support. Shared by `@moq/watch` and `@moq/publish`. | [![npm](https://img.shields.io/npm/v/@moq/hang)](https://www.npmjs.com/package/@moq/hang) |
-| **[@moq/demo](dev/web)** | Examples using `@moq/hang`.                                                                                  |                                                                                                       |
+| **[@moq/demo](demo/web)** | Examples using `@moq/hang`.                                                                                  |                                                                                                       |
 | **[@moq/watch](js/watch)**         | Subscribe to and render MoQ broadcasts (Web Component + JS API).                                                        | [![npm](https://img.shields.io/npm/v/@moq/watch)](https://www.npmjs.com/package/@moq/watch)     |
 | **[@moq/publish](js/publish)**     | Publish media to MoQ broadcasts (Web Component + JS API).                                                               | [![npm](https://img.shields.io/npm/v/@moq/publish)](https://www.npmjs.com/package/@moq/publish) |
 | **[@moq/ui-core](js/ui-core)**     | Shared UI components (Button, Icon, Stats, CSS theme) used by `@moq/watch/ui` and `@moq/publish/ui`.                    | [![npm](https://img.shields.io/npm/v/@moq/ui-core)](https://www.npmjs.com/package/@moq/ui-core) |
@@ -139,7 +139,7 @@ This repository provides both [Rust](/rs) and [TypeScript](/js) libraries with s
 
 Additional documentation and implementation details:
 
-- **[Authentication](doc/concept/authentication.md)** - JWT tokens, authorization, and security
+- **[Authentication](doc/app/relay/auth.md)** - JWT tokens, authorization, and security
 
 ## Protocol
 
@@ -170,7 +170,7 @@ just pub tos  # Terminal 2: Publish a demo video using ffmpeg
 just web      # Terminal 3: Start web server
 ```
 
-There are more commands: check out the [justfile](justfile), [rs/justfile](rs/justfile), and [js/justfile](js/justfile).
+There are more commands: check out the [justfile](justfile).
 
 ## Iroh support
 

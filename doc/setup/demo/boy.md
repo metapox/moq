@@ -17,7 +17,7 @@ This demo showcases MoQ's key differentiators:
 ## Running
 
 ```bash
-just dev boy
+just demo boy
 ```
 
 This starts three components in parallel:
@@ -31,7 +31,7 @@ The default ROM ([Big2Small](https://github.com/mdsteele/big2small), a GPLv3 puz
 ### Custom ROM
 
 ```bash
-just dev boy start rom=path/to/game.gb
+just demo boy start path/to/game.gb
 ```
 
 ### Multiple Sessions
@@ -39,7 +39,7 @@ just dev boy start rom=path/to/game.gb
 Run additional instances in separate terminals with different ROMs:
 
 ```bash
-just dev boy start rom=path/to/other.gb
+just demo boy start path/to/other.gb
 ```
 
 Each session appears in the grid automatically via MoQ's announcement system.
@@ -64,24 +64,39 @@ On-screen buttons are also available. All buttons highlight when pressed (by you
 
 ## Architecture
 
+### Path Prefixes
+
+The emulator and viewer use configurable path prefixes to separate authenticated and anonymous traffic:
+
+| Environment | Game Prefix | Viewer Prefix |
+|-------------|-------------|---------------|
+| **Localhost** | `anon/boy/game` | `anon/boy/viewer` |
+| **Production** | `demo/boy/game` (authenticated) | `anon/boy/viewer` (unauthenticated) |
+
 ### Broadcast Hierarchy
 
 ```text
-boy/
+{gamePrefix}/
   {name}/                           <- game session broadcast
     catalog.json                    <- video + audio renditions (managed by moq-mux)
     video0.avc3                     <- 160x144 H.264 video at ~60fps
     audio0.opus                     <- Opus audio
     status                          <- JSON state (raw moq-lite track)
-    viewer/
-      {viewerId}/                   <- viewer broadcast
-        command                     <- JSON commands (raw moq-lite track)
+
+{viewerPrefix}/
+  {name}/
+    {viewerId}/                     <- viewer broadcast
+      command                       <- JSON commands (raw moq-lite track)
 ```
 
 ### Discovery
 
-- **Viewers discover sessions** — subscribe to announcements with prefix `boy/`, filter to single-component suffixes
-- **Emulator discovers viewers** — subscribes to `boy/{name}/viewer/` prefix using `OriginProducer::with_root()`
+- **Viewers discover sessions** — subscribe to announcements with the game prefix, filter to single-component suffixes
+- **Emulator discovers viewers** — subscribes to the viewer prefix using `OriginProducer::with_root()`
+
+### Auto-Pause
+
+Emulation and encoding are automatically paused when no viewers are watching. When a viewer connects, emulation resumes immediately with a fresh keyframe.
 
 ### Video Pipeline
 
@@ -101,13 +116,14 @@ The emulator's APU outputs PCM audio samples which are encoded to Opus via ffmpe
 
 | Track | Format | Content |
 |-------|--------|---------|
-| `status` | Raw JSON | `{"buttons": ["up", "a"], "reset_in": 295}` |
-| `command` | Raw JSON | `{"type": "button", "button": "left"}` or `{"type": "reset"}` |
+| `status` | Raw JSON | `{"buttons": ["up", "a"], "latency": {"abc123": 42}}` |
+| `command` | Raw JSON | `{"type": "buttons", "buttons": ["left"]}` or `{"type": "reset"}` |
 
 These tracks bypass the hang container format — they're raw UTF-8 JSON bytes written directly to `moq_lite` groups.
 
 ## Source Code
 
-- **Rust publisher**: [`dev/boy/src/`](https://github.com/moq-dev/moq/tree/main/dev/boy/src/) — `main.rs`, `emulator.rs`, `video.rs`, `audio.rs`, `input.rs`
-- **Web viewer**: [`dev/boy/src/index.ts`](https://github.com/moq-dev/moq/tree/main/dev/boy/src/index.ts)
-- **Justfile**: [`dev/boy/justfile`](https://github.com/moq-dev/moq/tree/main/dev/boy/justfile)
+- **Rust publisher**: [`rs/moq-boy/src/`](https://github.com/moq-dev/moq/tree/main/rs/moq-boy/src/) — `main.rs`, `emulator.rs`, `video.rs`, `audio.rs`, `input.rs`
+- **Web viewer**: [`js/moq-boy/src/`](https://github.com/moq-dev/moq/tree/main/js/moq-boy/src/) — `index.ts` (Game class), `element.ts` (web component), `ui/` (SolidJS components)
+- **Demo app**: [`demo/boy/`](https://github.com/moq-dev/moq/tree/main/demo/boy/) — HTML page with `<moq-boy>` element
+- **Justfile**: [`demo/boy/justfile`](https://github.com/moq-dev/moq/tree/main/demo/boy/justfile)

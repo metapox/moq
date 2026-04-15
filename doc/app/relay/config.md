@@ -59,6 +59,12 @@ key = "/path/to/key.pem"     # Private key
 
 # Option 2: Generate self-signed certificates (development only)
 generate = ["localhost", "127.0.0.1"]
+
+# Optional: root CAs to accept for mTLS peer authentication.
+# Clients that present a cert signed by one of these CAs are granted
+# full access (publish/subscribe/cluster). Intended for relay clustering.
+# Quinn backend only.
+root = ["/path/to/peer-ca.pem"]
 ```
 
 For production, use certificates from Let's Encrypt or another CA.
@@ -155,65 +161,11 @@ secret = "./relay-iroh-secret.key"
 
 ## Example Configurations
 
-### Development
+See the [`demo/relay/`](https://github.com/moq-dev/moq/tree/main/demo/relay) directory for working configuration files:
 
-```toml
-[log]
-level = "debug"
-
-[server]
-listen = "0.0.0.0:4443"
-tls.generate = ["localhost"]
-
-[web.http]
-listen = "0.0.0.0:4443"
-
-[auth]
-public = ""  # No authentication
-```
-
-### Production
-
-```toml
-[server]
-listen = "0.0.0.0:443"
-
-[server.tls]
-cert = "/etc/letsencrypt/live/relay.example.com/fullchain.pem"
-key = "/etc/letsencrypt/live/relay.example.com/privkey.pem"
-
-[web.https]
-listen = "0.0.0.0:443"
-cert = "/etc/letsencrypt/live/relay.example.com/fullchain.pem"
-key = "/etc/letsencrypt/live/relay.example.com/privkey.pem"
-
-[auth]
-key = "public.jwk"
-```
-
-### Cluster Leaf Node
-
-```toml
-[server]
-listen = "0.0.0.0:443"
-
-[server.tls]
-cert = "cert.pem"
-key = "key.pem"
-
-[cluster]
-connect = "root.relay.example.com:443"
-token = "cluster.jwt"
-node = "leaf.relay.example.com:443"
-
-[client]
-# Use proper TLS verification in production
-# tls.root = ["root-ca.pem"]
-
-[auth]
-key = "public.jwk"
-public = "anon"
-```
+- **Development** - [`demo/relay/root.toml`](https://github.com/moq-dev/moq/blob/main/demo/relay/root.toml)
+- **Production** - [`demo/relay/prod.toml`](https://github.com/moq-dev/moq/blob/main/demo/relay/prod.toml)
+- **Cluster Leaf Node** - [`demo/relay/leaf0.toml`](https://github.com/moq-dev/moq/blob/main/demo/relay/leaf0.toml)
 
 ## Environment Variables
 

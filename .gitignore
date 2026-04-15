@@ -20,6 +20,9 @@ node_modules
 /.direnv
 
 
+# Cloudflare Wrangler
+.wrangler/
+
 # We're using bun
 package-lock.json
 yarn.lock

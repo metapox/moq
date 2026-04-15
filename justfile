@@ -3,25 +3,31 @@
 # Using Just: https://github.com/casey/just?tab=readme-ov-file#installation
 
 
-mod dev
+mod demo
+mod cdn
 
-# Shortcuts to avoid `dev::` prefix.
-mod boy 'dev/boy'
-mod pub 'dev/pub'
-mod relay 'dev/relay'
-mod web 'dev/web'
+# Shortcuts to avoid `demo::` prefix.
+mod boy 'demo/boy'
+mod pub 'demo/pub'
+mod relay 'demo/relay'
+mod sub 'demo/sub'
+mod web 'demo/web'
 
-# Run the web demo by default.
+# Run the demo by default.
 default:
-	just dev
+	just demo
+
+# Alias for `just demo`.
+dev:
+	just demo
 
 # Install any dependencies.
 install:
 	bun install
-	cargo install --locked cargo-shear cargo-sort cargo-upgrades cargo-edit cargo-hack cargo-sweep cargo-semver-checks release-plz
+	cargo install --locked cargo-shear cargo-sort cargo-upgrades cargo-edit cargo-sweep cargo-semver-checks release-plz
 
 # Run the CI checks
-check:
+check *args:
 	#!/usr/bin/env bash
 	set -euo pipefail
 
@@ -38,12 +44,12 @@ check:
 	bun remark . --quiet --frail
 
 	# Run the (slower) Rust checks.
-	cargo check --all-targets
-	cargo clippy --all-targets -- -D warnings
+	cargo check --all-targets {{ args }}
+	cargo clippy --all-targets {{ args }} -- -D warnings
 	cargo fmt --all --check
 
-	# Check documentation warnings (only workspace crates, not dependencies)
-	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
+	# Check documentation warnings (default-members only, not dependencies)
+	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps {{ args }}
 
 	# requires: cargo install cargo-shear
 	cargo shear
@@ -51,26 +57,24 @@ check:
 	# requires: cargo install cargo-sort
 	cargo sort --workspace --check
 
-	# Run the Python checks.
-	if command -v uv &> /dev/null; then
-		uv run ruff check py/
-		uv run ruff format --check py/
-		uv run --package moq-lite pyright
-	fi
-
-	# Only run the tofu checks if tofu is installed.
-	if command -v tofu &> /dev/null; then (cd cdn && just check); fi
-
-	# Only run the nix checks if nix is installed.
-	if command -v nix &> /dev/null; then nix flake check; fi
-
 # Run comprehensive CI checks including feature edge cases
 ci:
 	#!/usr/bin/env bash
 	set -euo pipefail
 
-	# Run the standard checks first
-	just check
+	# Run the standard checks first, including non-default workspace members
+	just check --workspace
+
+	# Run the Python checks.
+	uv run ruff check py/
+	uv run ruff format --check py/
+	uv run --package moq-lite pyright
+
+	# Run the tofu checks.
+	(cd cdn && just check)
+
+	# Run the nix checks.
+	nix flake check
 
 	# Run the unit tests with all features to exercise all QUIC backends
 	just test --all-features
@@ -78,19 +82,26 @@ ci:
 	# Make sure everything builds
 	just build
 
-	# Check all feature combinations for all crates
-	# requires: cargo install cargo-hack
-	cargo hack check --workspace --each-feature --no-dev-deps --exclude moq-ffi
+	# Check feature edge cases for all crates
+	cargo check --workspace --no-default-features
+	cargo check --workspace --all-features
 
-# Check semver compatibility against crates.io
+	# Dry-run publish to verify packaging
+	cargo publish --dry-run
+
+# Check semver compatibility against crates.io (default-members only)
 # requires: cargo install cargo-semver-checks
-# libmoq is an internal C-ABI crate and is intentionally excluded from published-crate semver checks.
 semver:
-	cargo semver-checks check-release --workspace --exclude libmoq
+	cargo semver-checks check-release
 
 # Update versions and changelogs via release-plz
 bump:
 	release-plz update
+
+# Create release PRs and publish crates
+release:
+	release-plz release-pr --git-token "$GITHUB_TOKEN"
+	release-plz release --git-token "$GITHUB_TOKEN"
 
 # Run the unit tests
 test *args:

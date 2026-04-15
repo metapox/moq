@@ -10,6 +10,7 @@ User=root
 WorkingDirectory=/var/lib/moq
 Environment="RUST_LOG=info"
 Environment="RUST_BACKTRACE=1"
+Environment="MALLOC_CONF=prof:true,prof_active:true,prof_prefix:/tmp/moq-relay.heap"
 
 ExecStart=/var/lib/moq/pkg/bin/moq-relay \
   --listen [::]:443 \
@@ -17,6 +18,8 @@ ExecStart=/var/lib/moq/pkg/bin/moq-relay \
   --tls-key /etc/letsencrypt/live/${domain}/privkey.pem \
   --auth-key /var/lib/moq/root.jwk \
   --auth-public anon \
+  --auth-public-subscribe demo \
+  --auth-public-publish demo/viewer \
   --web-https-listen [::]:443 \
   --web-https-cert /etc/letsencrypt/live/${domain}/fullchain.pem \
   --web-https-key /etc/letsencrypt/live/${domain}/privkey.pem \

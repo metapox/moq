@@ -16,6 +16,10 @@ export type ReloadDelay = {
 	// The maximum delay in milliseconds.
 	// default: 30000
 	max: DOMHighResTimeStamp;
+
+	// Maximum total time in milliseconds to spend retrying before giving up.
+	// Resets after each successful connection. Omit for unlimited retries.
+	timeout?: DOMHighResTimeStamp;
 };
 
 export type ReloadProps = ConnectProps & {
@@ -54,7 +58,15 @@ export class Reload {
 
 	signals = new Effect();
 
+	// Resolves when the reconnect loop stops (close() or timeout).
+	closed: Promise<void>;
+	#closedResolve!: () => void;
+	#closedReject!: (err: Error) => void;
+
 	#delay: DOMHighResTimeStamp;
+
+	// Timestamp when the current retry sequence started (for timeout).
+	#retryStart: DOMHighResTimeStamp | undefined;
 
 	// Increased by 1 each time to trigger a reload.
 	#tick = new Signal(0);
@@ -67,6 +79,11 @@ export class Reload {
 		this.websocket = props?.websocket;
 
 		this.#delay = this.delay.initial;
+
+		this.closed = new Promise((resolve, reject) => {
+			this.#closedResolve = resolve;
+			this.#closedReject = reject;
+		});
 
 		// Create a reactive root so cleanup is easier.
 		this.signals.run(this.#connect.bind(this));
@@ -100,12 +117,25 @@ export class Reload {
 
 				effect.set(this.status, "connected", "disconnected");
 
-				// Reset the exponential backoff on success.
+				// Reset the exponential backoff and timeout on success.
 				this.#delay = this.delay.initial;
+				this.#retryStart = undefined;
 
 				await Promise.race([effect.cancel, connection.closed]);
 			} catch (err) {
 				console.warn("connection error:", err);
+
+				// Track retry start for timeout.
+				this.#retryStart ??= performance.now();
+
+				if (this.delay.timeout !== undefined) {
+					const elapsed = performance.now() - this.#retryStart;
+					if (elapsed >= this.delay.timeout) {
+						console.warn("reconnect timed out");
+						this.#closedReject(new Error("reconnect timed out"));
+						return;
+					}
+				}
 
 				const tick = this.#tick.peek() + 1;
 				effect.timer(() => this.#tick.update((prev) => Math.max(prev, tick)), this.#delay);
@@ -123,15 +153,11 @@ export class Reload {
 
 		effect.cleanup(() => this.#announced.set(new Set()));
 
-		// Warn if the relay doesn't support announcements (e.g. Cloudflare)
+		// Cloudflare's relay does not yet support SUBSCRIBE_NAMESPACE, so
+		// skip announce subscriptions entirely for those hosts.
 		if (conn.url.hostname.endsWith("mediaoverquic.com")) {
-			effect.timer(() => {
-				if (this.#announced.peek().size === 0) {
-					console.warn(
-						"Cloudflare relay does not support the reload feature yet. Remove the `reload` attribute to connect without waiting for announcements.",
-					);
-				}
-			}, 1000);
+			console.warn("Cloudflare relay does not support broadcast discovery yet; skipping subscribe_namespace.");
+			return;
 		}
 
 		const announced = conn.announced(emptyPath());
@@ -160,5 +186,6 @@ export class Reload {
 
 	close() {
 		this.signals.close();
+		this.#closedResolve();
 	}
 }

@@ -1,0 +1,7 @@
+*.jwk
+*.jwt
+*.key
+*.pem
+*.csr
+*.cnf
+*.srl

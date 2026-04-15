@@ -17,6 +17,7 @@ mod fmp4;
 mod hev1;
 mod hls;
 mod opus;
+mod stats;
 
 pub use aac::*;
 pub use av01::*;
@@ -27,6 +28,7 @@ pub use fmp4::*;
 pub use hev1::*;
 pub use hls::*;
 pub use opus::*;
+pub use stats::*;
 
 #[cfg(test)]
 mod test;
