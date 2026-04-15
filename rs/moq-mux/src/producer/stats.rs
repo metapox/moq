@@ -1,3 +1,6 @@
+// TODO: wire into Avc3/Fmp4/Hls/Opus producers; ported from main ahead of that integration.
+#![allow(dead_code)]
+
 use std::ops::Sub;
 use std::time::{Duration, Instant};
 
