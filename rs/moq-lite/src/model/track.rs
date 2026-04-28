@@ -700,30 +700,12 @@ impl TrackConsumer {
 		self.state.read().max_sequence
 	}
 
-	/// Upgrade this consumer back to a [TrackProducer] sharing the same state.
-	///
-	/// This enables zero-copy track sharing between broadcasts: subscribe to a
-	/// track, then [`crate::BroadcastProducer::insert_track`] the producer into another
-	/// broadcast. Both broadcasts serve the same underlying track data with no
-	/// forwarding overhead.
-	///
-	/// # Shared Ownership
-	///
-	/// The returned producer shares state with the original track. Mutations
-	/// (appending groups, finishing, aborting) through either producer affect
-	/// all consumers of the track. The returned producer keeps the track alive
-	/// (prevents auto-close) as long as it exists, even if the original producer
-	/// is dropped.
-	pub fn produce(&self) -> Result<TrackProducer> {
-		let state = self
-			.state
-			.produce()
-			.ok_or_else(|| self.state.read().abort.clone().unwrap_or(Error::Dropped))?;
-		Ok(TrackProducer {
+	/// Create a weak reference that doesn't prevent auto-close.
+	pub(crate) fn weak(&self) -> TrackWeak {
+		TrackWeak {
 			info: self.info.clone(),
-			state,
-			prev_subscription: None,
-		})
+			state: self.state.weak(),
+		}
 	}
 }
 
@@ -1494,56 +1476,6 @@ mod test {
 		}
 
 		assert!(matches!(producer.append_group(), Err(Error::BoundsExceeded(_))));
-	}
-
-	#[tokio::test]
-	async fn consumer_produce() {
-		let mut producer = Track::new("test").produce();
-		producer.append_group().unwrap();
-
-		let consumer = producer.consume();
-
-		let got = consumer.produce().expect("should produce");
-		assert!(got.is_clone(&producer), "should be the same track");
-
-		got.clone().append_group().unwrap();
-		let mut subscriber = producer.consume().assert_subscribe();
-		subscriber.assert_group(); // group 0
-		subscriber.assert_group(); // group 1
-	}
-
-	#[tokio::test]
-	async fn consumer_produce_after_drop() {
-		let producer = Track::new("test").produce();
-		let consumer = producer.consume();
-		drop(producer);
-
-		let err = consumer.produce();
-		assert!(matches!(err, Err(Error::Dropped)), "expected Dropped");
-	}
-
-	#[tokio::test]
-	async fn consumer_produce_after_abort() {
-		let mut producer = Track::new("test").produce();
-		let consumer = producer.consume();
-		producer.abort(Error::Cancel).unwrap();
-		drop(producer);
-
-		let err = consumer.produce();
-		assert!(matches!(err, Err(Error::Cancel)), "expected Cancel");
-	}
-
-	#[tokio::test]
-	async fn consumer_produce_keeps_alive() {
-		let producer = Track::new("test").produce();
-		let consumer = producer.consume();
-		let upgraded = consumer.produce().expect("should produce");
-		drop(producer);
-
-		assert!(consumer.closed().now_or_never().is_none(), "should not be closed");
-		drop(upgraded);
-
-		assert!(consumer.closed().now_or_never().is_some(), "should be closed");
 	}
 
 	#[tokio::test]
