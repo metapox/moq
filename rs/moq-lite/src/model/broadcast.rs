@@ -180,8 +180,8 @@ impl BroadcastProducer {
 		self.create_track(track.clone()).expect("should not have errored")
 	}
 
-	pub fn assert_insert_track(&mut self, track: &TrackProducer) {
-		self.insert_track(track.consume()).expect("should not have errored")
+	pub fn assert_insert_track(&mut self, track: TrackConsumer) {
+		self.insert_track(track).expect("should not have errored")
 	}
 }
 
@@ -430,7 +430,7 @@ mod test {
 		let mut track1 = Track::new("track1").produce();
 
 		// Make sure we can insert before a consumer is created.
-		producer.assert_insert_track(&track1);
+		producer.assert_insert_track(track1.consume());
 		track1.append_group().unwrap();
 
 		let consumer = producer.consume();
@@ -439,7 +439,7 @@ mod test {
 		track1_sub.assert_group();
 
 		let mut track2 = Track::new("track2").produce();
-		producer.assert_insert_track(&track2);
+		producer.assert_insert_track(track2.consume());
 
 		let consumer2 = producer.consume();
 		let mut track2_consumer = consumer2.assert_subscribe_track(&Track::new("track2"));
