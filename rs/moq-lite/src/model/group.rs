@@ -244,10 +244,40 @@ impl GroupProducer {
 		}
 	}
 
-	/// Block until the group is closed or aborted.
+	/// Block until the group is aborted or all producers are dropped.
+	///
+	/// Returns the abort error, or [`Error::Dropped`] if the last producer
+	/// was dropped without an explicit abort. Does NOT fire on a clean
+	/// [`Self::finish`] — finished groups remain readable. For "any terminal
+	/// state" semantics, use [`Self::finished`] instead.
 	pub async fn closed(&self) -> Error {
 		self.state.closed().await;
 		self.state.read().abort.clone().unwrap_or(Error::Dropped)
+	}
+
+	/// Block until the group reaches any terminal state — finished, aborted,
+	/// or dropped.
+	///
+	/// Returns `Ok(())` on a clean [`Self::finish`], or `Err(err)` on
+	/// [`Self::abort`] (or [`Error::Dropped`] if the last producer is dropped
+	/// without finish/abort).
+	pub async fn finished(&self) -> Result<()> {
+		match self
+			.state
+			.wait(|state| {
+				if let Some(err) = &state.abort {
+					Poll::Ready(Err(err.clone()))
+				} else if state.fin {
+					Poll::Ready(Ok(()))
+				} else {
+					Poll::Pending
+				}
+			})
+			.await
+		{
+			Ok(res) => res,
+			Err(state) => Err(state.abort.clone().unwrap_or(Error::Dropped)),
+		}
 	}
 
 	/// Block until there are no active consumers.
@@ -604,5 +634,32 @@ mod test {
 
 		let end = c2.next_frame().now_or_never().unwrap().unwrap();
 		assert!(end.is_none());
+	}
+
+	#[tokio::test]
+	async fn finished_returns_ok_on_finish() {
+		let mut producer = Group { sequence: 0 }.produce();
+		producer.finish().unwrap();
+		assert!(matches!(producer.finished().now_or_never(), Some(Ok(()))));
+	}
+
+	#[tokio::test]
+	async fn finished_returns_err_on_abort() {
+		let mut producer = Group { sequence: 0 }.produce();
+		producer.abort(crate::Error::Cancel).unwrap();
+		assert!(matches!(
+			producer.finished().now_or_never(),
+			Some(Err(crate::Error::Cancel))
+		));
+	}
+
+	#[tokio::test]
+	async fn closed_does_not_fire_on_finish() {
+		let mut producer = Group { sequence: 0 }.produce();
+		producer.finish().unwrap();
+		assert!(
+			producer.closed().now_or_never().is_none(),
+			"closed() should still be pending"
+		);
 	}
 }

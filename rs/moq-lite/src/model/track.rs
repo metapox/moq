@@ -532,14 +532,42 @@ impl TrackProducer {
 		conducer::wait(|waiter| self.poll_subscription(waiter)).await
 	}
 
-	/// Block until the track is closed (finished or aborted), returning the
-	/// final error (or [`Error::Dropped`] if dropped without finish/abort).
+	/// Block until the track is aborted or all producers are dropped.
 	///
-	/// Useful for `select!`-racing the track's life against in-progress writes
-	/// to one of its groups.
+	/// Returns the abort error, or [`Error::Dropped`] if the last producer
+	/// dropped without an explicit abort. Does NOT fire on a clean
+	/// [`Self::finish`] — finished tracks remain readable. For "any terminal
+	/// state" semantics, use [`Self::finished`] instead, which also fires on
+	/// finish.
 	pub async fn closed(&self) -> Error {
 		self.state.closed().await;
 		self.state.read().abort.clone().unwrap_or(Error::Dropped)
+	}
+
+	/// Block until the track reaches any terminal state — finished, aborted,
+	/// or dropped.
+	///
+	/// Returns `Ok(())` on a clean [`Self::finish`], or `Err(err)` on
+	/// [`Self::abort`] (or [`Error::Dropped`] if the last producer is dropped
+	/// without finish/abort). Useful for waiting until no further writes can
+	/// happen, regardless of how the track ended.
+	pub async fn finished(&self) -> Result<()> {
+		match self
+			.state
+			.wait(|state| {
+				if let Some(err) = &state.abort {
+					Poll::Ready(Err(err.clone()))
+				} else if state.final_sequence.is_some() {
+					Poll::Ready(Ok(()))
+				} else {
+					Poll::Pending
+				}
+			})
+			.await
+		{
+			Ok(res) => res,
+			Err(state) => Err(state.abort.clone().unwrap_or(Error::Dropped)),
+		}
 	}
 
 	fn modify(&self) -> Result<conducer::Mut<'_, State>> {
@@ -1696,5 +1724,30 @@ mod test {
 			.expect("should not block")
 			.expect("would have errored");
 		assert!(done.is_none(), "groups past end should yield None");
+	}
+
+	#[tokio::test]
+	async fn finished_returns_ok_on_finish() {
+		let mut producer = Track::new("test").produce();
+		producer.finish().unwrap();
+		assert!(matches!(producer.finished().now_or_never(), Some(Ok(()))));
+	}
+
+	#[tokio::test]
+	async fn finished_returns_err_on_abort() {
+		let mut producer = Track::new("test").produce();
+		producer.abort(Error::Cancel).unwrap();
+		assert!(matches!(producer.finished().now_or_never(), Some(Err(Error::Cancel))));
+	}
+
+	#[tokio::test]
+	async fn closed_does_not_fire_on_finish() {
+		let mut producer = Track::new("test").produce();
+		producer.finish().unwrap();
+		// A clean finish must NOT trigger closed() — finished tracks remain readable.
+		assert!(
+			producer.closed().now_or_never().is_none(),
+			"closed() should still be pending"
+		);
 	}
 }

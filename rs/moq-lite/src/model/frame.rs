@@ -219,11 +219,40 @@ impl FrameProducer {
 			.map_err(|r| r.abort.clone().unwrap_or(Error::Dropped))
 	}
 
-	/// Block until the frame is closed (finished or aborted), returning the
-	/// final error (or [`Error::Dropped`] if dropped without finish/abort).
+	/// Block until the frame is aborted or all producers are dropped.
+	///
+	/// Returns the abort error, or [`Error::Dropped`] if the last producer
+	/// was dropped without an explicit abort. Does NOT fire when the frame's
+	/// bytes have all been written — for "any terminal state" semantics, use
+	/// [`Self::finished`] instead.
 	pub async fn closed(&self) -> Error {
 		self.state.closed().await;
 		self.state.read().abort.clone().unwrap_or(Error::Dropped)
+	}
+
+	/// Block until the frame reaches any terminal state — fully written,
+	/// aborted, or dropped.
+	///
+	/// Returns `Ok(())` once all bytes have been written (`remaining == 0`),
+	/// or `Err(err)` on [`Self::abort`] (or [`Error::Dropped`] if the last
+	/// producer is dropped before completion).
+	pub async fn finished(&self) -> Result<()> {
+		match self
+			.state
+			.wait(|state| {
+				if let Some(err) = &state.abort {
+					Poll::Ready(Err(err.clone()))
+				} else if state.remaining == 0 {
+					Poll::Ready(Ok(()))
+				} else {
+					Poll::Pending
+				}
+			})
+			.await
+		{
+			Ok(res) => res,
+			Err(state) => Err(state.abort.clone().unwrap_or(Error::Dropped)),
+		}
 	}
 
 	fn modify(&mut self) -> Result<conducer::Mut<'_, FrameState>> {
@@ -451,5 +480,31 @@ mod test {
 
 		let data = consumer.read_all().now_or_never().unwrap().unwrap();
 		assert_eq!(data, Bytes::from_static(b"hello"));
+	}
+
+	#[tokio::test]
+	async fn finished_returns_ok_when_fully_written() {
+		let mut producer = Frame { size: 5 }.produce();
+		producer.write(Bytes::from_static(b"hello")).unwrap();
+		assert!(matches!(producer.finished().now_or_never(), Some(Ok(()))));
+	}
+
+	#[tokio::test]
+	async fn finished_returns_err_on_abort() {
+		let mut producer = Frame { size: 5 }.produce();
+		producer.abort(Error::Cancel).unwrap();
+		assert!(matches!(producer.finished().now_or_never(), Some(Err(Error::Cancel))));
+	}
+
+	#[tokio::test]
+	async fn closed_does_not_fire_on_complete_write() {
+		let mut producer = Frame { size: 5 }.produce();
+		producer.write(Bytes::from_static(b"hello")).unwrap();
+		producer.finish().unwrap();
+		// closed() is abort-only — completion doesn't trigger it.
+		assert!(
+			producer.closed().now_or_never().is_none(),
+			"closed() should still be pending"
+		);
 	}
 }
