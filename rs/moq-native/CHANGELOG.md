@@ -44,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.14](https://github.com/moq-dev/moq/compare/moq-native-v0.13.13...moq-native-v0.13.14) - 2026-04-29
+
+### Other
+
+- relocate jemalloc helper; wire it into moq-boy ([#1360](https://github.com/moq-dev/moq/pull/1360))
+- backport Subscription model API for FETCH readiness ([#1348](https://github.com/moq-dev/moq/pull/1348))
+- hop-based clustering ([#1322](https://github.com/moq-dev/moq/pull/1322))
+
 ## [0.13.13](https://github.com/moq-dev/moq/compare/moq-native-v0.13.12...moq-native-v0.13.13) - 2026-04-19
 
 ### Other

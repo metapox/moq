@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/moq-dev/moq/compare/moq-lite-v0.15.15...moq-lite-v0.16.0) - 2026-04-29
+
+### Other
+
+- per-frame buffer + BufMut producer to cut relay memory ([#1353](https://github.com/moq-dev/moq/pull/1353))
+- backport Subscription model API for FETCH readiness ([#1348](https://github.com/moq-dev/moq/pull/1348))
+- add OriginConsumer::wait_for_broadcast; deprecate consume_broadcast ([#1340](https://github.com/moq-dev/moq/pull/1340))
+- hop-based clustering ([#1322](https://github.com/moq-dev/moq/pull/1322))
+
 ## [0.15.15](https://github.com/moq-dev/moq/compare/moq-lite-v0.15.14...moq-lite-v0.15.15) - 2026-04-19
 
 ### Other

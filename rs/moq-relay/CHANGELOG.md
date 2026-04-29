@@ -64,6 +64,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.26](https://github.com/moq-dev/moq/compare/moq-relay-v0.10.25...moq-relay-v0.10.26) - 2026-04-29
+
+### Other
+
+- authenticate HTTPS callers via the cluster mTLS CA ([#1350](https://github.com/moq-dev/moq/pull/1350))
+- relocate jemalloc helper; wire it into moq-boy ([#1360](https://github.com/moq-dev/moq/pull/1360))
+- backport Subscription model API for FETCH readiness ([#1348](https://github.com/moq-dev/moq/pull/1348))
+- add subdomain-based slug routing for customer isolation ([#1343](https://github.com/moq-dev/moq/pull/1343))
+- add OriginConsumer::wait_for_broadcast; deprecate consume_broadcast ([#1340](https://github.com/moq-dev/moq/pull/1340))
+- hop-based clustering ([#1322](https://github.com/moq-dev/moq/pull/1322))
+
 ## [0.10.25](https://github.com/moq-dev/moq/compare/moq-relay-v0.10.24...moq-relay-v0.10.25) - 2026-04-20
 
 ### Other

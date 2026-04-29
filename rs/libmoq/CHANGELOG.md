@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.14](https://github.com/moq-dev/moq/compare/libmoq-v0.2.13...libmoq-v0.2.14) - 2026-04-29
+
+### Other
+
+- backport Subscription model API for FETCH readiness ([#1348](https://github.com/moq-dev/moq/pull/1348))
+- add OriginConsumer::wait_for_broadcast; deprecate consume_broadcast ([#1340](https://github.com/moq-dev/moq/pull/1340))
+- hop-based clustering ([#1322](https://github.com/moq-dev/moq/pull/1322))
+
 ## [0.2.13](https://github.com/moq-dev/moq/compare/libmoq-v0.2.12...libmoq-v0.2.13) - 2026-03-18
 
 ### Other
