@@ -120,6 +120,16 @@ impl FrameState {
 			Poll::Ready(Ok(&[]))
 		}
 	}
+
+	fn poll_closed(&self) -> Poll<Result<()>> {
+		if self.remaining == 0 {
+			Poll::Ready(Ok(()))
+		} else if let Some(err) = &self.abort {
+			Poll::Ready(Err(err.clone()))
+		} else {
+			Poll::Pending
+		}
+	}
 }
 
 /// Writes a frame's payload in one or more chunks.
@@ -207,6 +217,13 @@ impl FrameProducer {
 			.unused()
 			.await
 			.map_err(|r| r.abort.clone().unwrap_or(Error::Dropped))
+	}
+
+	/// Block until the frame is closed (finished or aborted), returning the
+	/// final error (or [`Error::Dropped`] if dropped without finish/abort).
+	pub async fn closed(&self) -> Error {
+		self.state.closed().await;
+		self.state.read().abort.clone().unwrap_or(Error::Dropped)
 	}
 
 	fn modify(&mut self) -> Result<conducer::Mut<'_, FrameState>> {
@@ -315,6 +332,16 @@ impl FrameConsumer {
 	/// Read all of the remaining chunks into a vector.
 	pub async fn read_chunks(&mut self) -> Result<Vec<Bytes>> {
 		conducer::wait(|waiter| self.poll_read_chunks(waiter)).await
+	}
+
+	/// Poll for frame closure (finished or aborted).
+	pub fn poll_closed(&self, waiter: &conducer::Waiter) -> Poll<Result<()>> {
+		self.poll(waiter, |state| state.poll_closed())
+	}
+
+	/// Block until the frame is closed (finished or aborted).
+	pub async fn closed(&self) -> Result<()> {
+		conducer::wait(|waiter| self.poll_closed(waiter)).await
 	}
 }
 

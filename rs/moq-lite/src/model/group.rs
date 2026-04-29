@@ -71,7 +71,10 @@ impl From<u16> for Group {
 struct GroupState {
 	// The frames currently cached in the group.
 	// Evicted frames are popped from the front; `offset` tracks how many.
-	frames: VecDeque<FrameProducer>,
+	//
+	// Stored as consumers, not producers: the group keeps a read-only handle
+	// while the caller's [`FrameProducer`] is the writer.
+	frames: VecDeque<FrameConsumer>,
 
 	// The number of frames evicted from the front of the group.
 	offset: usize,
@@ -91,7 +94,7 @@ impl GroupState {
 		if index < self.offset {
 			Poll::Ready(Err(Error::CacheFull))
 		} else if let Some(frame) = self.frames.get(index - self.offset) {
-			Poll::Ready(Ok(Some(frame.consume())))
+			Poll::Ready(Ok(Some(frame.clone())))
 		} else if self.fin {
 			Poll::Ready(Ok(None))
 		} else if let Some(err) = &self.abort {
@@ -104,6 +107,16 @@ impl GroupState {
 	fn poll_finished(&self) -> Poll<Result<u64>> {
 		if self.fin {
 			Poll::Ready(Ok((self.offset + self.frames.len()) as u64))
+		} else if let Some(err) = &self.abort {
+			Poll::Ready(Err(err.clone()))
+		} else {
+			Poll::Pending
+		}
+	}
+
+	fn poll_closed(&self) -> Poll<Result<()>> {
+		if self.fin {
+			Poll::Ready(Ok(()))
 		} else if let Some(err) = &self.abort {
 			Poll::Ready(Err(err.clone()))
 		} else {
@@ -175,12 +188,16 @@ impl GroupProducer {
 	/// Create a frame with an upfront size
 	pub fn create_frame(&mut self, info: Frame) -> Result<FrameProducer> {
 		let frame = info.produce();
-		self.append_frame(frame.clone())?;
+		self.append_frame(frame.consume())?;
 		Ok(frame)
 	}
 
-	/// Append a frame producer to the group.
-	pub fn append_frame(&mut self, frame: FrameProducer) -> Result<()> {
+	/// Append a frame consumer to the group.
+	///
+	/// The group keeps a read-only handle so subscribers can read the frame's
+	/// chunks. The caller is responsible for keeping the [`FrameProducer`]
+	/// alive until the frame is finished.
+	pub fn append_frame(&mut self, frame: FrameConsumer) -> Result<()> {
 		let mut state = modify(&self.state)?;
 		if state.fin {
 			return Err(Error::Closed);
@@ -206,16 +223,13 @@ impl GroupProducer {
 
 	/// Abort the group with the given error.
 	///
-	/// No updates can be made after this point.
+	/// No updates can be made after this point. Cached frames are NOT aborted
+	/// — the writer (the [`FrameProducer`] returned from [`Self::create_frame`])
+	/// is the owner. Readers/writers who hold both handles should `select!`
+	/// on [`Self::closed`] / [`GroupConsumer::closed`] to learn the parent
+	/// group has died.
 	pub fn abort(&mut self, err: Error) -> Result<()> {
 		let mut guard = modify(&self.state)?;
-
-		// Abort all frames still in progress.
-		for frame in guard.frames.iter_mut() {
-			// Ignore errors, we don't care if the frame was already closed.
-			frame.abort(err.clone()).ok();
-		}
-
 		guard.abort = Some(err);
 		guard.close();
 		Ok(())
@@ -369,6 +383,19 @@ impl GroupConsumer {
 	pub async fn finished(&mut self) -> Result<u64> {
 		conducer::wait(|waiter| self.poll_finished(waiter)).await
 	}
+
+	/// Poll for group closure (finished or aborted).
+	pub fn poll_closed(&self, waiter: &conducer::Waiter) -> Poll<Result<()>> {
+		self.poll(waiter, |state| state.poll_closed())
+	}
+
+	/// Block until the group is closed (finished or aborted).
+	///
+	/// Useful for `select!`-racing the group's life against in-progress writes
+	/// or reads on one of its frames.
+	pub async fn closed(&self) -> Result<()> {
+		conducer::wait(|waiter| self.poll_closed(waiter)).await
+	}
 }
 
 #[cfg(test)]
@@ -453,6 +480,21 @@ mod test {
 
 		let result = consumer.next_frame().now_or_never().unwrap();
 		assert!(matches!(result, Err(crate::Error::Cancel)));
+	}
+
+	#[test]
+	fn abort_does_not_close_in_progress_frames() {
+		// Group abort is NOT cascaded to cached frames — the writer of the
+		// frame is the owner. Holders of both handles are responsible for
+		// racing `group.closed()` if they want to short-circuit on abort.
+		let mut producer = Group { sequence: 0 }.produce();
+		let mut frame = producer.create_frame(Frame::from(5u64)).unwrap();
+
+		producer.abort(crate::Error::Cancel).unwrap();
+
+		// The frame writer still works — its conducer state is independent.
+		frame.write(Bytes::from_static(b"hello")).unwrap();
+		frame.finish().unwrap();
 	}
 
 	#[tokio::test]

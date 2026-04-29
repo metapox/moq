@@ -149,16 +149,16 @@ impl BroadcastProducer {
 		}
 	}
 
-	/// Abort the broadcast and all child tracks with the given error.
+	/// Abort the broadcast with the given error.
+	///
+	/// Cached tracks are NOT aborted — a track may live in multiple broadcasts
+	/// and the broadcast only holds a weak handle. Pending dynamic track
+	/// requests ARE aborted because the broadcast is the sole owner of those
+	/// unfulfilled producers.
 	pub fn abort(&mut self, err: Error) -> Result<(), Error> {
 		let mut guard = modify(&self.state)?;
 
-		// Cascade abort to all child tracks.
-		for weak in guard.tracks.values() {
-			weak.abort(err.clone());
-		}
-
-		// Abort any pending dynamic track requests.
+		// Abort any pending dynamic track requests; nobody else owns them.
 		for mut request in guard.requests.drain(..) {
 			request.abort(err.clone()).ok();
 		}
@@ -171,6 +171,15 @@ impl BroadcastProducer {
 	/// Return true if this is the same broadcast instance.
 	pub fn is_clone(&self, other: &Self) -> bool {
 		self.state.same_channel(&other.state)
+	}
+
+	/// Block until the broadcast is closed, returning the final error (or
+	/// [`Error::Dropped`] if dropped without an explicit abort).
+	///
+	/// Useful for `select!`-racing the broadcast's life against per-track work.
+	pub async fn closed(&self) -> Error {
+		self.state.closed().await;
+		self.state.read().abort.clone().unwrap_or(Error::Dropped)
 	}
 }
 
@@ -246,15 +255,14 @@ impl BroadcastDynamic {
 	}
 
 	/// Abort the broadcast with the given error.
+	///
+	/// Cached tracks are NOT aborted (see [`BroadcastProducer::abort`] for
+	/// rationale). Pending dynamic track requests ARE aborted because the
+	/// broadcast is the sole owner of those unfulfilled producers.
 	pub fn abort(&mut self, err: Error) -> Result<(), Error> {
 		let mut guard = modify(&self.state)?;
 
-		// Cascade abort to all child tracks.
-		for weak in guard.tracks.values() {
-			weak.abort(err.clone());
-		}
-
-		// Abort any pending dynamic track requests.
+		// Abort any pending dynamic track requests; nobody else owns them.
 		for mut request in guard.requests.drain(..) {
 			request.abort(err.clone()).ok();
 		}
@@ -267,6 +275,13 @@ impl BroadcastDynamic {
 	/// Return true if this is the same broadcast instance.
 	pub fn is_clone(&self, other: &Self) -> bool {
 		self.state.same_channel(&other.state)
+	}
+
+	/// Block until the broadcast is closed, returning the final error (or
+	/// [`Error::Dropped`] if dropped without an explicit abort).
+	pub async fn closed(&self) -> Error {
+		self.state.closed().await;
+		self.state.read().abort.clone().unwrap_or(Error::Dropped)
 	}
 }
 
@@ -463,17 +478,22 @@ mod test {
 		let track1c = consumer.assert_subscribe_track(&track1);
 		let track2 = consumer.assert_subscribe_track(&Track::new("track2"));
 
-		// Explicitly aborting the broadcast should cascade to child tracks.
+		// Explicitly aborting the broadcast.
 		producer.abort(Error::Cancel).unwrap();
 
-		// The requested TrackProducer should have been aborted.
+		// The unfulfilled dynamic-track request IS aborted (broadcast was its
+		// sole owner).
 		track2.assert_error();
 
-		// track1 should also be closed because close() cascades.
-		track1c.assert_error();
+		// The statically inserted track is NOT cascaded — `track1` may live
+		// in other broadcasts. Its subscriber stays alive until track1 itself
+		// is dropped or aborted.
+		track1c.assert_not_closed();
+		assert!(!track1.is_closed());
 
-		// track1's producer should also be closed.
-		assert!(track1.is_closed());
+		// Dropping the track1 producer is what closes its subscriber.
+		drop(track1);
+		track1c.assert_closed();
 	}
 
 	#[tokio::test]

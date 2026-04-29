@@ -363,16 +363,20 @@ impl<S: web_transport_trait::Session> Subscriber<S> {
 	pub async fn recv_group(&mut self, stream: &mut Reader<S::RecvStream, Version>) -> Result<(), Error> {
 		let hdr: lite::Group = stream.decode().await?;
 
-		let mut group = {
+		let (mut group, track) = {
 			let mut subs = self.subscribes.lock();
 			let track = subs.get_mut(&hdr.subscribe).ok_or(Error::Cancel)?;
 
 			let group = Group { sequence: hdr.sequence };
-			track.create_group(group)?
+			(track.create_group(group)?, track.clone())
 		};
 
+		// Stop ingesting if either the group itself or its parent track closes;
+		// the latter matters because parent aborts no longer cascade to cached
+		// children.
 		let res = tokio::select! {
 			err = group.closed() => Err(err),
+			err = track.closed() => Err(err),
 			res = self.run_group(stream, group.clone()) => res,
 		};
 

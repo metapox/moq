@@ -69,7 +69,12 @@ pub struct Subscription {
 #[derive(Default)]
 struct State {
 	/// Groups in arrival order. `None` entries are tombstones for evicted groups.
-	groups: VecDeque<Option<(GroupProducer, tokio::time::Instant)>>,
+	///
+	/// Stored as consumers, not producers: the track keeps a read-only handle
+	/// while the caller's [`GroupProducer`] is the writer. When the writer is
+	/// dropped, the group closes naturally; the track does not force aborts
+	/// downward.
+	groups: VecDeque<Option<(GroupConsumer, tokio::time::Instant)>>,
 	duplicates: HashSet<u64>,
 	offset: usize,
 	max_sequence: Option<u64>,
@@ -90,7 +95,7 @@ impl State {
 			if let Some((group, _)) = slot
 				&& group.sequence >= min_sequence
 			{
-				return Poll::Ready(Ok(Some((group.consume(), self.offset + i))));
+				return Poll::Ready(Ok(Some((group.clone(), self.offset + i))));
 			}
 		}
 
@@ -121,7 +126,7 @@ impl State {
 				continue;
 			}
 
-			let mut consumer = group.consume();
+			let mut consumer = group.clone();
 			match consumer.poll_read_frame(waiter) {
 				Poll::Ready(Ok(Some(frame))) => {
 					return Poll::Ready(Ok(Some((frame, self.offset + i, group.sequence))));
@@ -152,7 +157,7 @@ impl State {
 		// Search for the group with the matching sequence, skipping tombstones.
 		for (group, _) in self.groups.iter().flatten() {
 			if group.sequence == sequence {
-				return Poll::Ready(Ok(Some(group.consume())));
+				return Poll::Ready(Ok(Some(group.clone())));
 			}
 		}
 
@@ -348,7 +353,7 @@ impl TrackProducer {
 
 		let now = tokio::time::Instant::now();
 		state.max_sequence = Some(state.max_sequence.unwrap_or(0).max(group.sequence));
-		state.groups.push_back(Some((group.clone(), now)));
+		state.groups.push_back(Some((group.consume(), now)));
 		state.evict_expired(now);
 
 		Ok(group)
@@ -372,7 +377,7 @@ impl TrackProducer {
 		let now = tokio::time::Instant::now();
 		state.duplicates.insert(sequence);
 		state.max_sequence = Some(sequence);
-		state.groups.push_back(Some((group.clone(), now)));
+		state.groups.push_back(Some((group.consume(), now)));
 		state.evict_expired(now);
 
 		Ok(group)
@@ -429,15 +434,14 @@ impl TrackProducer {
 	}
 
 	/// Abort the track with the given error.
+	///
+	/// Cached groups are NOT aborted — a group may live in multiple tracks,
+	/// and the writer (the [`GroupProducer`] returned from
+	/// [`Self::create_group`] / [`Self::append_group`]) is the owner. Readers
+	/// who hold both a track handle and a group handle should `select!` on
+	/// [`TrackConsumer::closed`] to learn that the parent track has died.
 	pub fn abort(&mut self, err: Error) -> Result<()> {
 		let mut guard = self.modify()?;
-
-		// Abort all groups still in progress.
-		for (group, _) in guard.groups.iter_mut().flatten() {
-			// Ignore errors, we don't care if the group was already closed.
-			group.abort(err.clone()).ok();
-		}
-
 		guard.abort = Some(err);
 		guard.close();
 		Ok(())
@@ -528,6 +532,16 @@ impl TrackProducer {
 		conducer::wait(|waiter| self.poll_subscription(waiter)).await
 	}
 
+	/// Block until the track is closed (finished or aborted), returning the
+	/// final error (or [`Error::Dropped`] if dropped without finish/abort).
+	///
+	/// Useful for `select!`-racing the track's life against in-progress writes
+	/// to one of its groups.
+	pub async fn closed(&self) -> Error {
+		self.state.closed().await;
+		self.state.read().abort.clone().unwrap_or(Error::Dropped)
+	}
+
 	fn modify(&self) -> Result<conducer::Mut<'_, State>> {
 		self.state
 			.write()
@@ -559,18 +573,6 @@ pub(crate) struct TrackWeak {
 }
 
 impl TrackWeak {
-	pub fn abort(&self, err: Error) {
-		let Ok(mut guard) = self.state.write() else { return };
-
-		// Cascade abort to all groups.
-		for (group, _) in guard.groups.iter_mut().flatten() {
-			group.abort(err.clone()).ok();
-		}
-
-		guard.abort = Some(err);
-		guard.close();
-	}
-
 	pub fn is_closed(&self) -> bool {
 		self.state.is_closed()
 	}

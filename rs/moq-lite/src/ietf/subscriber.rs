@@ -676,7 +676,7 @@ impl<S: web_transport_trait::Session> Subscriber<S> {
 			return Err(Error::Unsupported);
 		}
 
-		let mut producer = {
+		let (mut producer, track) = {
 			let mut state = self.state.lock();
 			let request_id = match state.aliases.get(&group.track_alias) {
 				Some(request_id) => *request_id,
@@ -687,14 +687,18 @@ impl<S: web_transport_trait::Session> Subscriber<S> {
 			};
 			let track = state.subscribes.get_mut(&request_id).ok_or(Error::NotFound)?;
 
-			let group = Group {
+			let group_info = Group {
 				sequence: group.group_id,
 			};
-			track.producer.create_group(group)?
+			(track.producer.create_group(group_info)?, track.producer.clone())
 		};
 
+		// Stop ingesting if either the group itself or its parent track closes;
+		// the latter matters because parent aborts no longer cascade to cached
+		// children.
 		let res = tokio::select! {
 			err = producer.closed() => Err(err),
+			err = track.closed() => Err(err),
 			res = self.run_group(group, stream, producer.clone()) => res,
 		};
 
