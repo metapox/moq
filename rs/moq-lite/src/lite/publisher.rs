@@ -5,7 +5,8 @@ use web_async::FuturesExt;
 use web_transport_trait::Stats;
 
 use crate::{
-	AsPath, BroadcastConsumer, Error, Origin, OriginConsumer, OriginList, Subscription, Track, TrackSubscriber,
+	AsPath, BroadcastConsumer, Error, Origin, OriginConsumer, OriginList, Subscription, Track, TrackConsumer,
+	TrackSubscriber,
 	coding::{Stream, Writer},
 	lite::{
 		self,
@@ -306,7 +307,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 
 		stream.writer.encode(&lite::SubscribeResponse::Ok(info)).await?;
 
-		Self::run_track(session, subscriber, stream, subscribe.id, priority, version).await?;
+		Self::run_track(session, consumer, subscriber, stream, subscribe.id, priority, version).await?;
 
 		stream.writer.finish()?;
 		stream.writer.closed().await
@@ -314,6 +315,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 
 	async fn run_track(
 		session: S,
+		track: TrackConsumer,
 		mut subscriber: TrackSubscriber,
 		stream: &mut Stream<S, Version>,
 		subscribe_id: u64,
@@ -341,7 +343,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 						};
 
 						let p = priority.insert(subscriber.subscription().priority, sequence);
-						tasks.push(Self::serve_group(session.clone(), msg, p, group, version).map(|_| ()));
+						tasks.push(Self::serve_group(session.clone(), msg, p, track.clone(), group, version).map(|_| ()));
 					}
 					None => break,
 				},
@@ -370,6 +372,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 		session: S,
 		msg: lite::Group,
 		mut priority: PriorityHandle,
+		track: TrackConsumer,
 		mut group: GroupConsumer,
 		version: Version,
 	) -> Result<(), Error> {
@@ -381,10 +384,20 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 		stream.encode(&lite::DataType::Group).await?;
 		stream.encode(&msg).await?;
 
+		// Resolve only on track abort/drop, never on a clean finish — finished
+		// tracks can still serve cached groups.
+		let track_aborted = || async {
+			match track.closed().await {
+				Err(err) => err,
+				Ok(()) => std::future::pending().await,
+			}
+		};
+
 		loop {
 			let frame = tokio::select! {
 				biased;
 				_ = stream.closed() => return Err(Error::Cancel),
+				err = track_aborted() => return Err(err),
 				frame = group.next_frame() => frame,
 				// Update the priority if it changes.
 				priority = priority.next() => {
@@ -404,6 +417,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 				let chunk = tokio::select! {
 					biased;
 					_ = stream.closed() => return Err(Error::Cancel),
+					err = track_aborted() => return Err(err),
 					chunk = frame.read_chunk() => chunk,
 					// Update the priority if it changes.
 					priority = priority.next() => {

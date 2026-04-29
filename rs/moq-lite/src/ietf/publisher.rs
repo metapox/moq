@@ -5,7 +5,7 @@ use web_async::FuturesExt;
 use web_transport_trait::SendStream;
 
 use crate::{
-	AsPath, Error, Origin, OriginConsumer, Subscription, Track, TrackSubscriber,
+	AsPath, Error, Origin, OriginConsumer, Subscription, Track, TrackConsumer, TrackSubscriber,
 	coding::{Stream, Writer},
 	ietf::{self, Control, FetchHeader, FetchType, FilterType, GroupOrder, Location, RequestId},
 	model::GroupConsumer,
@@ -164,7 +164,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 		// Run the track, cancelling on reader close (Unsubscribe or stream close)
 		let priority = msg.subscriber_priority;
 		let res = tokio::select! {
-			res = self.run_track(subscriber, request_id, priority) => res,
+			res = self.run_track(consumer, subscriber, request_id, priority) => res,
 			_ = stream.reader.closed() => Ok(()),
 			_ = self.session.closed() => Ok(()),
 		};
@@ -241,6 +241,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 	/// Serve a track using FuturesUnordered for unlimited concurrent groups.
 	async fn run_track(
 		&self,
+		track: TrackConsumer,
 		mut subscriber: TrackSubscriber,
 		request_id: RequestId,
 		priority: u8,
@@ -269,7 +270,9 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 				flags: Default::default(),
 			};
 
-			tasks.push(Self::run_group(self.session.clone(), msg, priority, group, self.version).map(|_| ()));
+			tasks.push(
+				Self::run_group(self.session.clone(), msg, priority, track.clone(), group, self.version).map(|_| ()),
+			);
 		}
 	}
 
@@ -277,6 +280,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 		session: S,
 		msg: ietf::GroupHeader,
 		priority: u8,
+		track: TrackConsumer,
 		mut group: GroupConsumer,
 		version: Version,
 	) -> Result<(), Error> {
@@ -287,10 +291,20 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 
 		stream.encode(&msg).await?;
 
+		// Resolve only on track abort/drop, never on a clean finish — finished
+		// tracks can still serve cached groups.
+		let track_aborted = || async {
+			match track.closed().await {
+				Err(err) => err,
+				Ok(()) => std::future::pending().await,
+			}
+		};
+
 		loop {
 			let frame = tokio::select! {
 				biased;
 				_ = stream.closed() => return Err(Error::Cancel),
+				err = track_aborted() => return Err(err),
 				frame = group.next_frame() => frame,
 			};
 
@@ -319,6 +333,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 					let chunk = tokio::select! {
 						biased;
 						_ = stream.closed() => return Err(Error::Cancel),
+						err = track_aborted() => return Err(err),
 						chunk = frame.read_chunk() => chunk,
 					};
 
