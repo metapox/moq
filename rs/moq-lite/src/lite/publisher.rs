@@ -340,7 +340,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 							sequence,
 						};
 
-						let p = priority.insert(subscriber.subscription().priority, sequence);
+						let p = priority.insert(subscriber.subscription().priority, sequence, subscribe_id);
 						tasks.push(Self::serve_group(session.clone(), msg, p, group, version).map(|_| ()));
 					}
 					None => break,
@@ -354,6 +354,7 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 							start: upd.start_group,
 							end: upd.end_group,
 						});
+						priority.update_subscription(subscribe_id, upd.priority);
 					}
 					None => break,
 				},
@@ -373,11 +374,13 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 		mut group: GroupConsumer,
 		version: Version,
 	) -> Result<(), Error> {
-		// TODO add a way to open in priority order.
 		let stream = session.open_uni().await.map_err(Error::from_transport)?;
 
 		let mut stream = Writer::new(stream, version);
-		stream.set_priority(priority.current());
+		let initial_priority = priority.current();
+		// Widen the priority range so quinn can effectively differentiate streams.
+		let quinn_pri = |idx: u8| -> u8 { idx.saturating_mul(64) };
+		stream.set_priority(quinn_pri(initial_priority));
 		stream.encode(&lite::DataType::Group).await?;
 		stream.encode(&msg).await?;
 
@@ -386,9 +389,8 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 				biased;
 				_ = stream.closed() => return Err(Error::Cancel),
 				frame = group.next_frame() => frame,
-				// Update the priority if it changes.
-				priority = priority.next() => {
-					stream.set_priority(priority);
+				new_pri = priority.next() => {
+					stream.set_priority(quinn_pri(new_pri));
 					continue;
 				}
 			};
@@ -405,15 +407,27 @@ impl<S: web_transport_trait::Session> Publisher<S> {
 					biased;
 					_ = stream.closed() => return Err(Error::Cancel),
 					chunk = frame.read_chunk() => chunk,
-					// Update the priority if it changes.
-					priority = priority.next() => {
-						stream.set_priority(priority);
+					new_pri = priority.next() => {
+						stream.set_priority(quinn_pri(new_pri));
 						continue;
 					}
 				};
 
 				match chunk? {
-					Some(mut chunk) => stream.write_all(&mut chunk).await?,
+					Some(mut chunk) => {
+						loop {
+							tokio::select! {
+								biased;
+								result = stream.write_all(&mut chunk) => {
+									result?;
+									break;
+								}
+								new_pri = priority.next() => {
+									stream.set_priority(quinn_pri(new_pri));
+								}
+							}
+						}
+					}
 					None => break,
 				}
 			}
